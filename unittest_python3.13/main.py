@@ -8,6 +8,7 @@ from . import loader, runner
 from .signals import installHandler
 
 __unittest = True
+_NO_TESTS_EXITCODE = 5
 
 MAIN_EXAMPLES = """\
 Examples:
@@ -65,32 +66,15 @@ class TestProgram(object):
     def __init__(self, module='__main__', defaultTest=None, argv=None,
                     testRunner=None, testLoader=loader.defaultTestLoader,
                     exit=True, verbosity=1, failfast=None, catchbreak=None,
-                    buffer=None, warnings=None, *, tb_locals=False):
-
-        py_tracing = False
+                    buffer=None, warnings=None, *, tb_locals=False,
+                    durations=None):
         if isinstance(module, str):
             self.module = __import__(module)
-
-            #wen: for tracing
-            md_info = dir(self.module)
-            if "tracing" in md_info:
-                # to support python -m pyinspect
-                py_tracing = True
-                
-                self.module = None
-                sys.argv = ['python -m unittest'] + sys.argv
-                
-                cur_path = os.path.abspath(r".")
-                sys.path.insert (0, cur_path)
-
-                print ("###wen TestProgram -> set self.module = None, sys.argv = " + str (sys.argv))
-                
             for part in module.split('.')[1:]:
                 self.module = getattr(self.module, part)
         else:
             self.module = module
-            
-        if argv is None or py_tracing is True:
+        if argv is None:
             argv = sys.argv
 
         self.exit = exit
@@ -99,6 +83,7 @@ class TestProgram(object):
         self.verbosity = verbosity
         self.buffer = buffer
         self.tb_locals = tb_locals
+        self.durations = durations
         if warnings is None and not sys.warnoptions:
             # even if DeprecationWarnings are ignored by default
             # print them anyway unless other warnings settings are
@@ -117,14 +102,6 @@ class TestProgram(object):
         self.progName = os.path.basename(argv[0])
         self.parseArgs(argv)
         self.runTests()
-
-    def usageExit(self, msg=None):
-        if msg:
-            print(msg)
-        if self._discovery_parser is None:
-            self._initArgParsers()
-        self._print_help()
-        sys.exit(2)
 
     def _print_help(self, *args, **kwargs):
         if self.module is None:
@@ -193,6 +170,9 @@ class TestProgram(object):
         parser.add_argument('--locals', dest='tb_locals',
                             action='store_true',
                             help='Show local variables in tracebacks')
+        parser.add_argument('--durations', dest='durations', type=int,
+                            default=None, metavar="N",
+                            help='Show the N slowest test cases (N=0 for all)')
         if self.failfast is None:
             parser.add_argument('-f', '--failfast', dest='failfast',
                                 action='store_true',
@@ -266,7 +246,6 @@ class TestProgram(object):
             installHandler()
         if self.testRunner is None:
             self.testRunner = runner.TextTestRunner
-
         if isinstance(self.testRunner, type):
             try:
                 try:
@@ -274,9 +253,10 @@ class TestProgram(object):
                                                  failfast=self.failfast,
                                                  buffer=self.buffer,
                                                  warnings=self.warnings,
-                                                 tb_locals=self.tb_locals)
+                                                 tb_locals=self.tb_locals,
+                                                 durations=self.durations)
                 except TypeError:
-                    # didn't accept the tb_locals argument
+                    # didn't accept the tb_locals or durations argument
                     testRunner = self.testRunner(verbosity=self.verbosity,
                                                  failfast=self.failfast,
                                                  buffer=self.buffer,
@@ -289,6 +269,12 @@ class TestProgram(object):
             testRunner = self.testRunner
         self.result = testRunner.run(self.test)
         if self.exit:
-            sys.exit(not self.result.wasSuccessful())
+            if self.result.testsRun == 0 and len(self.result.skipped) == 0:
+                sys.exit(_NO_TESTS_EXITCODE)
+            elif self.result.wasSuccessful():
+                sys.exit(0)
+            else:
+                sys.exit(1)
+
 
 main = TestProgram
